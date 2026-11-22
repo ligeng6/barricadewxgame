@@ -7,13 +7,17 @@ const DESIGN_H = 1334;
 export default class Main {
   constructor() {
     this.canvas = wx.createCanvas();
+    const windowInfo = wx.getWindowInfo ? wx.getWindowInfo() : wx.getSystemInfoSync();
+    const ratio = windowInfo.pixelRatio > 0 ? windowInfo.pixelRatio : 1;
+    this.canvas.width = Math.round(windowInfo.screenWidth * ratio);
+    this.canvas.height = Math.round(windowInfo.screenHeight * ratio);
+    this.pixelRatio = ratio;
     this.ctx = this.canvas.getContext('2d');
     this.width = this.canvas.width;
     this.height = this.canvas.height;
     this.scale = Math.min(this.width / DESIGN_W, this.height / DESIGN_H);
     this.offsetX = (this.width - DESIGN_W * this.scale) / 2;
     this.offsetY = (this.height - DESIGN_H * this.scale) / 2;
-    this.pixelRatio = wx.getSystemInfoSync().pixelRatio;
 
     this.onStart = () => this.setScene(new GameScene(this));
     this.scene = new StartScene(this);
