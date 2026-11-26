@@ -15,7 +15,14 @@
     "localPlugins": false,
     "condition": false,
     "disableUseStrict": false,
-    "useCompilerPlugins": false
+    "useCompilerPlugins": false,
+    "compileWorklet": false,
+    "minifyWXML": true,
+    "babelSetting": {
+      "ignore": [],
+      "disablePlugins": [],
+      "outputPath": ""
+    }
   },
   "compileType": "game",
   "libVersion": "latest",
@@ -34,5 +41,8 @@
     "ignore": [],
     "include": []
   },
-  "editorSetting": {}
+  "editorSetting": {},
+  "appid": "wx340e716576f23b23",
+  "simulatorPluginLibVersion": {},
+  "isGameTourist": false
 }

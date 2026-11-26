@@ -45,8 +45,9 @@ export default class StartScene {
     this.main = main;
     this.rulesOpen = false;
     this.buttons = [
-      { id: 'start', x: 147, y: 985, w: 456, h: 100, label: '开始对战' },
-      { id: 'rules', x: 147, y: 1115, w: 456, h: 100, label: '游戏规则' },
+      { id: 'start', x: 147, y: 895, w: 456, h: 96, label: '本地对战' },
+      { id: 'online', x: 147, y: 1015, w: 456, h: 96, label: '联机对战' },
+      { id: 'rules', x: 147, y: 1135, w: 456, h: 96, label: '游戏规则' },
     ];
   }
 
@@ -57,11 +58,13 @@ export default class StartScene {
     }
     for (const btn of this.buttons) {
       if (x >= btn.x && x <= btn.x + btn.w && y >= btn.y && y <= btn.y + btn.h) {
-        if (btn.id === 'rules') {
-          this.rulesOpen = true;
-        } else if (btn.id === 'start' && this.main.onStart) {
-          this.main.onStart();
-        }
+      if (btn.id === 'rules') {
+        this.rulesOpen = true;
+      } else if (btn.id === 'start' && this.main.onStart) {
+        this.main.onStart();
+      } else if (btn.id === 'online' && this.main.onOnline) {
+        this.main.onOnline();
+      }
         return;
       }
     }
@@ -124,8 +127,8 @@ export default class StartScene {
   }
 
   drawMiniBoard(ctx) {
-    const cell = 46;
-    const gap = 8;
+    const cell = 40;
+    const gap = 7;
     const unit = cell + gap;
     const boardW = 9 * cell + 8 * gap;
     const x0 = (W - boardW) / 2;
@@ -196,16 +199,16 @@ export default class StartScene {
       const cy = cellY(p.r) + cell / 2;
       ctx.fillStyle = rgba(p.color, 0.3);
       ctx.beginPath();
-      ctx.arc(cx, cy, 20, 0, Math.PI * 2);
+      ctx.arc(cx, cy, 17, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = p.color;
       ctx.beginPath();
-      ctx.arc(cx, cy, 14, 0, Math.PI * 2);
+      ctx.arc(cx, cy, 12, 0, Math.PI * 2);
       ctx.fill();
       ctx.strokeStyle = 'rgba(27, 16, 11, 0.4)';
       ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.arc(cx, cy, 14, 0, Math.PI * 2);
+      ctx.arc(cx, cy, 12, 0, Math.PI * 2);
       ctx.stroke();
     }
 

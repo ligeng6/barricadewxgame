@@ -43,14 +43,23 @@ function rgba(hex, alpha) {
 }
 
 export default class GameScene {
-  constructor(main) {
+  constructor(main, opts) {
     this.main = main;
+    this.net = main.net;
+    this.online = !!(opts && opts.online);
+    this.myPos = this.online && typeof opts.myPos === 'number' ? opts.myPos : -1;
+    this.names = (opts && opts.names) || ['红方', '绿方'];
     this.state = createState();
     this.mode = 'move';
     this.preview = null;
     this.toast = null;
+    this.againMe = false;
+    this.againOp = false;
+    this.leaving = false;
+    this.disconnected = false;
     this.buttons = [
-      { id: 'back', x: 56, y: 70, w: 130, h: 56, label: '‹ 主页' },
+      { id: 'back', x: 56, y: 50, w: 130, h: 52, label: '‹ 主页' },
+      { id: 'resign', x: 564, y: 50, w: 130, h: 52, label: '认输' },
       { id: 'modeMove', x: 120, y: 1000, w: 240, h: 72, label: '走一步' },
       { id: 'modeWall', x: 390, y: 1000, w: 240, h: 72, label: '放一墙' },
       { id: 'confirm', x: 120, y: 1095, w: 240, h: 72, label: '确认放置' },
@@ -58,6 +67,124 @@ export default class GameScene {
       { id: 'restart', x: 147, y: 810, w: 456, h: 96, label: '再来一局' },
       { id: 'home', x: 147, y: 930, w: 456, h: 96, label: '返回主页' },
     ];
+    if (this.online) {
+      this.offMsg = this.net.on('msg', (m) => this.onNetMsg(m));
+      this.offRoom = this.net.on('room', (info) => this.onRoomInfo(info));
+      this.offDisc = this.net.on('disconnect', () => this.onDisconnect());
+    }
+  }
+
+  dispose() {
+    if (!this.online) return;
+    this.net.off('msg', this.offMsg);
+    this.net.off('room', this.offRoom);
+    this.net.off('disconnect', this.offDisc);
+  }
+
+  goHome() {
+    if (this.online && !this.leaving) {
+      this.leaving = true;
+      this.net.leaveRoom();
+    }
+    this.main.setScene(new StartScene(this.main));
+  }
+
+  myTurn() {
+    return !this.online || this.state.turn === this.myPos;
+  }
+
+  serialize() {
+    const s = this.state;
+    return {
+      pawns: [{ r: s.pawns[0].r, c: s.pawns[0].c }, { r: s.pawns[1].r, c: s.pawns[1].c }],
+      wallsLeft: [s.wallsLeft[0], s.wallsLeft[1]],
+      h: Array.from(s.hWalls),
+      v: Array.from(s.vWalls),
+      turn: s.turn,
+      winner: s.winner,
+      moves: s.moves,
+    };
+  }
+
+  restoreState(data) {
+    if (!data || !data.pawns) return;
+    this.state = {
+      pawns: [{ r: data.pawns[0].r, c: data.pawns[0].c }, { r: data.pawns[1].r, c: data.pawns[1].c }],
+      wallsLeft: [data.wallsLeft[0], data.wallsLeft[1]],
+      hWalls: new Set(data.h || []),
+      vWalls: new Set(data.v || []),
+      turn: data.turn,
+      winner: data.winner,
+      moves: data.moves || 0,
+    };
+    this.preview = null;
+  }
+
+  resetGame() {
+    this.state = createState();
+    this.againMe = false;
+    this.againOp = false;
+    this.preview = null;
+    this.mode = 'move';
+    this.showToast('新一局开始');
+  }
+
+  onNetMsg(m) {
+    const s = this.state;
+    if (m.t === 'move') {
+      if (applyMove(s, m.p, { r: m.r, c: m.c })) return;
+      this.net.send({ t: 'reqsync' });
+    } else if (m.t === 'wall') {
+      if (applyWall(s, m.p, m.o, m.r, m.c)) return;
+      this.net.send({ t: 'reqsync' });
+    } else if (m.t === 'again') {
+      if (s.winner === -1) return;
+      this.againOp = true;
+      if (this.againMe) {
+        this.resetGame();
+      } else {
+        this.showToast('对方想再来一局，点再来一局接受');
+      }
+    } else if (m.t === 'resign') {
+      if (s.winner === -1) {
+        s.winner = 1 - m.p;
+        this.showToast('对方已认输');
+      }
+    } else if (m.t === 'bye') {
+      this.handleOpponentLeft();
+    } else if (m.t === 'reqsync') {
+      this.net.send({ t: 'sync', s: this.serialize() });
+    } else if (m.t === 'sync') {
+      this.restoreState(m.s);
+    }
+  }
+
+  handleOpponentLeft() {
+    if (this.leaving) return;
+    this.showToast('对方已离开房间');
+    if (this.state.winner === -1) {
+      this.state.winner = this.myPos >= 0 ? this.myPos : 0;
+    }
+  }
+
+  onRoomInfo(info) {
+    if (this.leaving || !info || !info.memberList) return;
+    if (info.memberList.length < 2) this.handleOpponentLeft();
+  }
+
+  onDisconnect() {
+    if (this.leaving) return;
+    this.disconnected = true;
+    this.showToast('连接中断，重连中…');
+    this.net.reconnect((ok) => {
+      this.disconnected = false;
+      if (ok) {
+        this.net.send({ t: 'reqsync' });
+        this.showToast('已重新连接');
+      } else {
+        this.showToast('重连失败，请返回主页重试');
+      }
+    });
   }
 
   cellX(c) {
@@ -106,16 +233,39 @@ export default class GameScene {
       const restart = this.buttons.find((b) => b.id === 'restart');
       const home = this.buttons.find((b) => b.id === 'home');
       if (this.hit(restart, x, y)) {
-        this.main.setScene(new GameScene(this.main));
+        if (this.online) {
+          this.againMe = true;
+          if (this.againOp) {
+            this.resetGame();
+          } else {
+            this.net.send({ t: 'again' });
+            this.showToast('已发送再战请求，等待对方…');
+          }
+        } else {
+          this.main.setScene(new GameScene(this.main));
+        }
       } else if (this.hit(home, x, y)) {
-        this.main.setScene(new StartScene(this.main));
+        this.goHome();
       }
       return;
     }
 
     const back = this.buttons.find((b) => b.id === 'back');
     if (this.hit(back, x, y)) {
-      this.main.setScene(new StartScene(this.main));
+      this.goHome();
+      return;
+    }
+
+    const resign = this.buttons.find((b) => b.id === 'resign');
+    if (this.online && this.hit(resign, x, y)) {
+      state.winner = 1 - this.myPos;
+      this.net.send({ t: 'resign' });
+      this.showToast('你已认输');
+      return;
+    }
+
+    if (this.online && !this.myTurn()) {
+      this.showToast('等待对方行动…');
       return;
     }
 
@@ -162,6 +312,14 @@ export default class GameScene {
           return;
         }
         applyWall(state, state.turn, this.preview.orientation, this.preview.r, this.preview.c);
+        if (this.online) {
+          this.net.send({
+            t: 'wall',
+            o: this.preview.orientation,
+            r: this.preview.r,
+            c: this.preview.c,
+          });
+        }
         this.preview = null;
         return;
       }
@@ -178,6 +336,7 @@ export default class GameScene {
       const cy = this.cellY(m.r) + CELL / 2;
       if ((x - cx) * (x - cx) + (y - cy) * (y - cy) <= (CELL / 2) * (CELL / 2)) {
         applyMove(state, state.turn, m);
+        if (this.online) this.net.send({ t: 'move', r: m.r, c: m.c });
         return;
       }
     }
@@ -190,7 +349,21 @@ export default class GameScene {
     this.drawControls(ctx);
     this.drawHint(ctx);
     if (this.state.winner !== -1) this.drawWin(ctx);
+    if (this.disconnected) this.drawDisconnected(ctx);
     if (this.toast && Date.now() < this.toast.until) this.drawToast(ctx);
+  }
+
+  drawDisconnected(ctx) {
+    ctx.fillStyle = 'rgba(229, 57, 53, 0.9)';
+    this.roundRect(ctx, 225, 50, 300, 44, 22);
+    ctx.fill();
+    ctx.fillStyle = '#FFFFFF';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = 'bold 22px sans-serif';
+    ctx.fillText('连接中断，重连中…', W / 2, 73);
+    ctx.textBaseline = 'alphabetic';
+    ctx.textAlign = 'left';
   }
 
   drawBackground(ctx) {
@@ -232,7 +405,7 @@ export default class GameScene {
       }
     }
 
-    if (this.mode === 'move' && state.winner === -1) {
+    if (this.mode === 'move' && state.winner === -1 && this.myTurn()) {
       const moves = legalMoves(state, state.turn);
       ctx.fillStyle = rgba(COLORS.gold, 0.22);
       for (const m of moves) {
@@ -331,7 +504,7 @@ export default class GameScene {
       ctx.fillStyle = COLORS.cream;
       ctx.textAlign = 'left';
       ctx.font = 'bold 30px sans-serif';
-      ctx.fillText(info.name, 178, y + 40);
+      ctx.fillText(this.names[p], 178, y + 40);
       ctx.font = '22px sans-serif';
       ctx.fillStyle = 'rgba(243, 229, 195, 0.7)';
       ctx.fillText(isCurrent ? '思考中…' : '等待对方', 178, y + 68);
@@ -352,7 +525,11 @@ export default class GameScene {
       const info = PLAYERS[state.turn];
       ctx.fillStyle = info.color;
       ctx.font = 'bold 34px sans-serif';
-      ctx.fillText(`${info.name}行动`, W / 2, 232);
+      if (this.online) {
+        ctx.fillText(this.myTurn() ? '轮到你了' : '等待对方…', W / 2, 232);
+      } else {
+        ctx.fillText(`${info.name}行动`, W / 2, 232);
+      }
     } else {
       ctx.fillStyle = 'rgba(243, 229, 195, 0.6)';
       ctx.font = 'bold 34px sans-serif';
@@ -417,6 +594,18 @@ export default class GameScene {
     ctx.textBaseline = 'middle';
     ctx.font = 'bold 26px sans-serif';
     ctx.fillText(back.label, back.x + back.w / 2, back.y + back.h / 2 + 1);
+
+    if (this.online && this.state.winner === -1) {
+      const resign = this.buttons.find((b) => b.id === 'resign');
+      ctx.fillStyle = 'rgba(229, 57, 53, 0.18)';
+      this.roundRect(ctx, resign.x, resign.y, resign.w, resign.h, 28);
+      ctx.fill();
+      ctx.strokeStyle = rgba('#E53935', 0.65);
+      this.roundRect(ctx, resign.x, resign.y, resign.w, resign.h, 28);
+      ctx.stroke();
+      ctx.fillStyle = '#FF8A80';
+      ctx.fillText(resign.label, resign.x + resign.w / 2, resign.y + resign.h / 2 + 1);
+    }
     ctx.textBaseline = 'alphabetic';
     ctx.textAlign = 'left';
   }
@@ -426,7 +615,9 @@ export default class GameScene {
     ctx.textAlign = 'center';
     ctx.fillStyle = 'rgba(243, 229, 195, 0.55)';
     ctx.font = '24px sans-serif';
-    if (this.mode === 'wall') {
+    if (this.online && !this.myTurn()) {
+      ctx.fillText('等待对方行动…', W / 2, 1215);
+    } else if (this.mode === 'wall') {
       ctx.fillText(this.preview ? '确认放置，或点其它空隙换位置' : '点棋盘空隙预览放墙位置', W / 2, 1215);
     } else {
       ctx.fillText('点发光格子移动棋子（可跳过对方）', W / 2, 1215);
@@ -478,7 +669,12 @@ export default class GameScene {
     ctx.fillText(`${winner.name}获胜！`, W / 2, py + 185);
     ctx.fillStyle = COLORS.cream;
     ctx.font = '28px sans-serif';
-    ctx.fillText('棋子到达对面底线', W / 2, py + 240);
+    let sub = '棋子到达对面底线';
+    if (this.online) {
+      if (this.againOp && !this.againMe) sub = '对方同意再来一局，点下方按钮开始';
+      else if (this.againMe && !this.againOp) sub = '等待对方同意再来一局…';
+    }
+    ctx.fillText(sub, W / 2, py + 240);
 
     for (const id of ['restart', 'home']) {
       const btn = this.buttons.find((b) => b.id === id);

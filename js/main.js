@@ -1,5 +1,7 @@
 import StartScene from './scene-start';
 import GameScene from './scene-game';
+import LobbyScene from './scene-lobby';
+import net from './net';
 
 const DESIGN_W = 750;
 const DESIGN_H = 1334;
@@ -20,10 +22,53 @@ export default class Main {
     this.offsetY = (this.height - DESIGN_H * this.scale) / 2;
 
     this.onStart = () => this.setScene(new GameScene(this));
+    this.onOnline = () => this.setScene(new LobbyScene(this));
+    this.net = net;
+    net.init();
+    net.startStateService();
     this.scene = new StartScene(this);
+
+    net.on('invite', (res) => {
+      const ai = res && res.data;
+      if (ai && !net.accessInfo) this.setScene(new LobbyScene(this, ai));
+    });
+
+    if (wx.onShareAppMessage) {
+      wx.onShareAppMessage(() => ({
+        title: '路障对战 · 邀你来一局',
+        query: net.accessInfo ? `accessInfo=${encodeURIComponent(net.accessInfo)}` : '',
+      }));
+    }
+
+    const launch = wx.getLaunchOptionsSync ? wx.getLaunchOptionsSync() : { query: {} };
+    const launchQuery = (launch && launch.query) || {};
+    this.handleQuery(launchQuery);
+    if (!launchQuery.accessInfo) {
+      net.restore((ai) => {
+        if (ai && this.scene instanceof StartScene) {
+          this.setScene(new LobbyScene(this, ai));
+        }
+      });
+    }
+    if (wx.onShow) {
+      wx.onShow((res) => this.handleQuery((res && res.query) || {}));
+    }
 
     wx.onTouchStart((e) => this.dispatchTouch(e));
     this.loop();
+  }
+
+  handleQuery(query) {
+    const raw = query.accessInfo;
+    if (!raw) return;
+    let ai = raw;
+    try {
+      ai = decodeURIComponent(raw);
+    } catch (e) {
+      // keep raw
+    }
+    if (net.accessInfo === ai) return;
+    this.setScene(new LobbyScene(this, ai));
   }
 
   toDesignPoint(touch) {
@@ -41,6 +86,8 @@ export default class Main {
   }
 
   setScene(scene) {
+    const old = this.scene;
+    if (old && old.dispose) old.dispose();
     this.scene = scene;
   }
 
